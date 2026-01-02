@@ -1,7 +1,6 @@
 const { 
     default: makeWASocket, 
     useMultiFileAuthState, 
-    DisconnectReason, 
     delay,
     fetchLatestBaileysVersion
 } = require('@whiskeysockets/baileys');
@@ -11,16 +10,14 @@ const readline = require('readline');
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 const question = (text) => new Promise((resolve) => rl.question(text, resolve));
 
-// --- CONFIGURATION ---
 const ADMIN_NUMBER = '254705127804@s.whatsapp.net';
 const DAILY_STATUS_LIMIT = 100; 
 let statusCount = 0;
 let lastResetDate = new Date().toDateString();
 
-// --- GHOST FEATURES STORAGE ---
 let typingGroups = new Set(); 
 const msgStore = {}; 
-const myKeywords = ['admin', 'ghost', 'bot', 'hacker', 'who is this', 'helo', 'hey'];
+const myKeywords = ['admin', 'ghost', 'bot', 'hacker', 'who is this'];
 
 async function startBot() {
     const { state, saveCreds } = await useMultiFileAuthState('auth_info');
@@ -31,10 +28,13 @@ async function startBot() {
         auth: state,
         logger: pino({ level: 'silent' }),
         printQRInTerminal: false,
-        browser: ['Termux', 'Chrome', '20.0.04']
+        browser: ['Termux', 'Chrome', '20.0.04'],
+        // --- KOYEB RAM OPTIMIZATION ---
+        shouldSyncHistoryMessage: () => false, // Prevents RAM crashes
+        linkPreviewImageThumbnailWidth: 192,
+        markOnlineOnConnect: true
     });
 
-    // --- NONSTOP TYPING ENGINE ---
     async function typingLoop() {
         while (true) {
             if (typingGroups.size > 0) {
@@ -46,10 +46,9 @@ async function startBot() {
         }
     }
 
-    // Pairing Logic
     if (!sock.authState.creds.registered) {
         console.log("\n--- PAIRING MODE ---");
-        const phoneNumber = await question('Enter your number (e.g. 254705127804): ');
+        const phoneNumber = await question('Enter your number: ');
         const code = await sock.requestPairingCode(phoneNumber.trim());
         console.log(`\nYOUR CODE: ${code}\n`);
     }
@@ -61,21 +60,19 @@ async function startBot() {
         if (connection === 'open') {
             console.log('✅ Ghost Bot is Active!');
             typingLoop();
-            sock.sendMessage(ADMIN_NUMBER, { text: `🚀 Ghost Online!\n\nFeatures Active:\n- Anti-Delete Snitch\n- Status React (😈)\n- Parting Gift (Auto-Defend)\n- Panic Button (.panic)` });
+            sock.sendMessage(ADMIN_NUMBER, { text: `🚀 Ghost Online (Cloud Mode)` });
         }
         if (connection === 'close') startBot();
     });
 
-    // --- FEATURE: PARTING GIFT (KICK DEFENSE) ---
+    // --- PARTING GIFT (AUTO-DEFEND) ---
     sock.ev.on('group-participants.update', async (anu) => {
-        // Detect if YOU were removed
         if (anu.action === 'remove' && anu.participants.includes(ADMIN_NUMBER)) {
             try {
                 await sock.sendMessage(anu.id, { 
-                    text: "😈 *THE GHOST NEVER TRULY LEAVES.* \n\nYou can remove the man, but you can't remove the eyes. I'll be watching from the shadows. 👀" 
+                    text: "😈 *THE GHOST NEVER TRULY LEAVES.* \n\nYou can remove the man, but you can't remove the eyes. 👀" 
                 });
-                await sock.sendMessage(ADMIN_NUMBER, { text: `⚠️ You were just kicked from group: ${anu.id}` });
-            } catch (e) { console.log("Parting gift failed - already kicked."); }
+            } catch (e) {}
         }
     });
 
@@ -87,48 +84,15 @@ async function startBot() {
         const body = (msg.message.conversation || msg.message.extendedTextMessage?.text || "").toLowerCase();
         const senderName = msg.pushName || "Someone";
 
-        // Store message for snitching
-        if (body) {
-            msgStore[msg.key.id] = { text: body, sender: senderName };
-        }
+        if (body) msgStore[msg.key.id] = { text: body, sender: senderName };
 
-        // Reset status counter
-        const today = new Date().toDateString();
-        if (lastResetDate !== today) {
-            statusCount = 0;
-            lastResetDate = today;
-        }
-
-        // --- COMMANDS ---
-        
-        // 1. Panic Button (Shutdown)
+        // Panic Button
         if (body === '.panic' && remoteJid === ADMIN_NUMBER) {
-            await sock.sendMessage(ADMIN_NUMBER, { text: '⚠️ PANIC MODE: Wiping memory and shutting down...' });
+            await sock.sendMessage(ADMIN_NUMBER, { text: '⚠️ SHUTTING DOWN...' });
             process.exit(); 
         }
 
-        // 2. Typing Controls
-        if (body === '.typeon' && (msg.key.participant === ADMIN_NUMBER || remoteJid === ADMIN_NUMBER)) {
-            typingGroups.add(remoteJid);
-            await sock.sendMessage(remoteJid, { text: '🚀 Nonstop typing *ENABLED*.' });
-            return;
-        }
-        if (body === '.typeoff' && (msg.key.participant === ADMIN_NUMBER || remoteJid === ADMIN_NUMBER)) {
-            typingGroups.delete(remoteJid);
-            await sock.sendPresenceUpdate('paused', remoteJid);
-            await sock.sendMessage(remoteJid, { text: '🛑 Nonstop typing *DISABLED*.' });
-            return;
-        }
-
-        // 3. Keyword Alert
-        const foundKeyword = myKeywords.find(keyword => body.includes(keyword));
-        if (foundKeyword && remoteJid.endsWith('@g.us')) {
-            await sock.sendMessage(ADMIN_NUMBER, { 
-                text: `🔔 *KEYWORD ALERT*\nUser: ${senderName}\nKeyword: "${foundKeyword}"\nMessage: "${body}"` 
-            });
-        }
-
-        // 4. Status React Logic
+        // Status View
         if (remoteJid === 'status@broadcast') {
             if (statusCount < DAILY_STATUS_LIMIT) {
                 try {
@@ -140,27 +104,18 @@ async function startBot() {
             return;
         }
 
-        // 5. Normal Auto-Read with Human Delay
+        // Auto-Read
         try {
-            if (!typingGroups.has(remoteJid)) {
-                await sock.sendPresenceUpdate('composing', remoteJid);
-                await delay(2000); 
-            }
             await sock.readMessages([msg.key]);
-            if (!typingGroups.has(remoteJid)) await sock.sendPresenceUpdate('paused', remoteJid);
         } catch (e) {}
     });
 
-    // --- REVEAL DELETED MESSAGES ---
     sock.ev.on('messages.update', async (chatUpdate) => {
         for (const { key, update } of chatUpdate) {
             if (update.messageStubType === 68 || (update.protocolMessage && update.protocolMessage.type === 0)) {
                 const deletedData = msgStore[key.id];
                 if (deletedData) {
-                    await sock.sendMessage(key.remoteJid, { 
-                        text: `🕵️‍♂️ *GHOST REVEAL* \n\n*${deletedData.sender}* tried to hide this:\n\n"${deletedData.text}"`
-                    });
-                    delete msgStore[key.id];
+                    await sock.sendMessage(key.remoteJid, { text: `🕵️‍♂️ *GHOST REVEAL* \n\n*${deletedData.sender}*: "${deletedData.text}"` });
                 }
             }
         }
